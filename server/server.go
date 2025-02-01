@@ -1,35 +1,68 @@
 package main
 
 import (
-	"fmt"
-	"net/http"
-	"github.com/gorilla/websocket"
+    "fmt"
+    "net/http"
+    "github.com/gorilla/websocket"
+    "database/sql"
+    _ "github.com/go-sql-driver/mysql"
+    "os"
 )
 
 var upgrader = websocket.Upgrader{
-	ReadBufferSize: 1024,
-	WriteBufferSize: 1024,
+    CheckOrigin: func(r *http.Request) bool { return true }, // Allow all connections
+}
+
+func connectDB() error {
+    dbUser := os.Getenv("USERNAME")
+    dbPassword := os.Getenv("PASSWORD")
+    dbHost := os.Getenv("HOST")
+    dbName := os.Getenv("DATABASE")
+
+    dsn := fmt.Sprintf("%s:%s@tcp(%s)/%s", dbUser, dbPassword, dbHost, dbName)
+    db, err := sql.Open("mysql", dsn)
+    if err != nil {
+        return err
+    }
+    defer db.Close()
+    fmt.Println("Database connection successful!")
+    return nil
+}
+
+func handleConnections(w http.ResponseWriter, r *http.Request) {
+    // Upgrade initial GET request to a WebSocket
+    ws, err := upgrader.Upgrade(w, r, nil)
+    if err != nil {
+        fmt.Println(err)
+        return
+    }
+    defer ws.Close()
+
+    for {
+        _, msg, err := ws.ReadMessage()
+        if err != nil {
+            fmt.Println("read error:", err)
+            break
+        }
+        fmt.Printf("Received: %s\n", msg)
+
+        if err := ws.WriteMessage(websocket.TextMessage, msg); err != nil {
+            fmt.Println("write error:", err)
+            break
+        }
+    }
 }
 
 func main() {
-	http.HandleFunc("/echo", func(w http.ResponseWriter, r *http.Request) {
-		conn, _ := upgrader.Upgrade(w, r, nil)
-		
-		for {
-			//read message
-			msgType, msg, err := conn.ReadMessage()
-			if err != nil {
-				return
-			}
+    if err := connectDB(); err != nil {
+        fmt.Println(err)
+        return
+    }
+    http.HandleFunc("/ws", handleConnections)
 
-			//print the above message to the console
-			fmt.Printf("%s sent: %s\n", conn.RemoteAddr(), string(msg))
-			
-			if err = conn.WriteMessage(msgType, msg); err != nil {
-				return
-			}
-		}
-	})
-
-	http.ListenAndServe(":6974", nil)
+    fmt.Println("WebSocket server started on :8080")
+    err := http.ListenAndServe(":8080", nil)
+    if err != nil {
+        fmt.Println("ListenAndServe:", err)
+    }
 }
